@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>Tetris Game</title>
+  <style>
+    /* 게임 보드와 주변 요소들 스타일 */
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: sans-serif;
+      text-align: center;
+      background: #f0f0f0;
+    }
+
+    h1 {
+      margin-top: 20px;
+    }
+
+    #game-container {
+      display: inline-block;
+      margin-top: 20px;
+      position: relative;
+    }
+
+    canvas {
+      background: #222;
+      display: block;
+      margin: 0 auto;
+      border: 2px solid #555;
+    }
+
+    #info {
+      margin: 10px auto;
+      width: 200px;
+      text-align: left;
+    }
+
+    #info p {
+      margin: 5px;
+    }
+
+    #start-btn {
+      display: inline-block;
+      margin-top: 10px;
+      padding: 10px 20px;
+      border: none;
+      cursor: pointer;
+      font-size: 16px;
+      background: #666;
+      color: #fff;
+    }
+    #start-btn:hover {
+      background: #555;
+    }
+
+  </style>
+</head>
+<body>
+  <h1>간단한 테트리스</h1>
+  <div id="game-container">
+    <canvas id="tetris" width="240" height="480"></canvas>
+  </div>
+  <div id="info">
+    <p>점수: <span id="score">0</span></p>
+    <p>레벨: <span id="level">1</span></p>
+    <button id="start-btn">게임 시작</button>
+    <p>조작 방법:</p>
+    <ul>
+      <li>좌/우 화살표 키: 좌우 이동</li>
+      <li>위 화살표 키: 회전</li>
+      <li>아래 화살표 키: 아래로 이동(소프트드롭)</li>
+      <li>Space(스페이스바): 빠른 낙하(Hard Drop)</li>
+    </ul>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('tetris');
+    const context = canvas.getContext('2d');
+
+    // 캔버스의 실제 픽셀 크기를 보드의 행열 수에 맞추기 위해 스케일 조정
+    // (가로 10칸, 세로 20칸. 각 칸은 24px 정사각형)
+    context.scale(24, 24);
+
+    // 게임 보드 크기 설정
+    const COLS = 10;
+    const ROWS = 20;
+
+    // 보드는 2차원 배열로 표현 (row x col)
+    // 0은 빈 칸
+    let board = createMatrix(COLS, ROWS);
+
+    // 테트리스 블록 모양(7가지 Tetromino)
+    // 각각 여러 회전을 담아둔 배열 형태가 되도록 정의
+    const SHAPES = {
+      I: [
+        [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+        [[0,1,0,0],[0,1,0,0],[0,1,0,0],[0,1,0,0]],
+        [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+        [[0,1,0,0],[0,1,0,0],[0,1,0,0],[0,1,0,0]],
+      ],
+      O: [
+        [[2,2],[2,2]],
+        [[2,2],[2,2]],
+        [[2,2],[2,2]],
+        [[2,2],[2,2]],
+      ],
+      T: [
+        [[0,3,0],[3,3,3],[0,0,0]],
+        [[0,3,0],[0,3,3],[0,3,0]],
+        [[0,0,0],[3,3,3],[0,3,0]],
+        [[0,3,0],[3,3,0],[0,3,0]],
+      ],
+      S: [
+        [[0,4,4],[4,4,0],[0,0,0]],
+        [[0,4,0],[0,4,4],[0,0,4]],
+        [[0,0,0],[0,4,4],[4,4,0]],
+        [[4,0,0],[4,4,0],[0,4,0]],
+      ],
+      Z: [
+        [[5,5,0],[0,5,5],[0,0,0]],
+        [[0,0,5],[0,5,5],[0,5,0]],
+        [[0,0,0],[5,5,0],[0,5,5]],
+        [[0,5,0],[5,5,0],[5,0,0]],
+      ],
+      J: [
+        [[6,0,0],[6,6,6],[0,0,0]],
+        [[0,6,6],[0,6,0],[0,6,0]],
+        [[0,0,0],[6,6,6],[0,0,6]],
+        [[0,6,0],[0,6,0],[6,6,0]],
+      ],
+      L: [
+        [[0,0,7],[7,7,7],[0,0,0]],
+        [[0,7,0],[0,7,0],[0,7,7]],
+        [[0,0,0],[7,7,7],[7,0,0]],
+        [[7,7,0],[0,7,0],[0,7,0]],
+      ]
+    };
+
+    // 색상 배열 (index 0은 빈 칸이므로 임의로 비워두거나 검정으로 처리)
+    const COLORS = [
+      null,
+      'cyan',    // I
+      'yellow',  // O
+      'purple',  // T
+      'green',   // S
+      'red',     // Z
+      'blue',    // J
+      'orange'   // L
+    ];
+
+    // 현재 움직이는 블록 객체
+    let player = {
+      pos: {x: 0, y: 0},
+      shapeIndex: 0, // 회전 상태
+      matrix: null,  // 현재 블록 모양(행렬)
+      shapeKey: '',  // I, O, T 등 블록 종류
+      score: 0,
+      level: 1
+    };
+
+    let dropCounter = 0;      // 자동 낙하를 위한 카운터
+    let dropInterval = 1000;  // 낙하 시간 간격 (ms)
+    let lastTime = 0;         // 이전 프레임 시각
+    let gameOver = false;     // 게임 오버 상태
+    let requestId = null;     // requestAnimationFrame 식별자
+
+    // 게임 시작 버튼
+    const startBtn = document.getElementById('start-btn');
+    startBtn.addEventListener('click', startGame);
+
+    function startGame() {
+      // 게임 상태 초기화
+      board = createMatrix(COLS, ROWS);
+      player.score = 0;
+      player.level = 1;
+      gameOver = false;
+      dropCounter = 0;
+      dropInterval = 1000;
+
+      updateScore();
+      updateLevel();
+      // 랜덤 블록 하나 생성
+      playerReset();
+      // 게임 루프 시작
+      cancelAnimationFrame(requestId);
+      lastTime = 0;
+      update(0);
+    }
+
+    // 2차원 배열(matrix) 생성 함수
+    function createMatrix(w, h) {
+      const matrix = [];
+      for (let i = 0; i < h; i++) {
+        matrix.push(new Array(w).fill(0));
+      }
+      return matrix;
+    }
+
+    // 블록을 그리는 함수
+    function drawMatrix(matrix, offset) {
+      matrix.forEach((row, y) => {
+        row.forEach((value, x) => {
+          if (value !== 0) {
+            context.fillStyle = COLORS[value];
+            context.fillRect(x + offset.x, y + offset.y, 1, 1);
+          }
+        });
+      });
+    }
+
+    // 전체 보드와 현재 블록을 그리는 함수
+    function draw() {
+      // 먼저 캔버스를 지움
+      context.clearRect(0, 0, canvas.width, canvas.height);
+
+      // 보드 그리기
+      drawMatrix(board, {x:0, y:0});
+
+      // 현재 떨어지는 블록 그리기
+      if (!gameOver) {
+        drawMatrix(player.matrix, player.pos);
+      }
+    }
+
+    // player.matrix(현재 블록)을 보드에 합치는 함수
+    function merge(board, player) {
+      player.matrix.forEach((row, y) => {
+        row.forEach((value, x) => {
+          if (value !== 0) {
+            board[y + player.pos.y][x + player.pos.x] = value;
+          }
+        });
+      });
+    }
+
+    // 충돌 감지 함수
+    function collide(board, player) {
+      const m = player.matrix;
+      const o = player.pos;
+      for (let y = 0; y < m.length; y++) {
+        for (let x = 0; x < m[y].length; x++) {
+          if (m[y][x] !== 0 &&
+            (board[y + o.y] && board[y + o.y][x + o.x]) !== 0) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    // 한 줄이 꽉 찬 경우 제거하고 점수를 계산
+    function sweepRows() {
+      let rowCount = 1;
+      outer: for (let y = board.length - 1; y >= 0; y--) {
+        for (let x = 0; x < board[y].length; x++) {
+          if (board[y][x] === 0) {
+            continue outer;
+          }
+        }
+        // 가득 찬 행 발견 시 해당 행을 제거
+        const row = board.splice(y, 1)[0].fill(0);
+        board.unshift(row);
+        y++;
+
+        // 점수 증가
+        player.score += rowCount * 10;
+        rowCount *= 2;
+      }
+    }
+
+    // 새로운 블록을 랜덤 생성 및 플레이어 위치 초기화
+    function playerReset() {
+      // 블록 종류 중 하나 랜덤 선택
+      const shapeKeys = Object.keys(SHAPES);
+      player.shapeKey = shapeKeys[Math.floor(Math.random() * shapeKeys.length)];
+      player.shapeIndex = 0;
+      player.matrix = SHAPES[player.shapeKey][player.shapeIndex];
+      // 첫 위치는 위쪽 중앙
+      player.pos.y = 0;
+      player.pos.x = (COLS / 2 | 0) - (player.matrix[0].length / 2 | 0);
+
+      // 생성 직후 충돌(즉 스폰 영역이 이미 막혀있으면 게임오버)
+      if (collide(board, player)) {
+        gameOver = true;
+        cancelAnimationFrame(requestId);
+        alert('게임 오버!');
+      }
+    }
+
+    // 블록 낙하
+    function playerDrop() {
+      player.pos.y++;
+      if (collide(board, player)) {
+        player.pos.y--;
+        merge(board, player);
+        sweepRows();
+        // 레벨 및 점수 업데이트
+        updateScore();
+        // 레벨 업 조건 (100점 기준으로 단순 계산 예시)
+        if (player.score >= player.level * 100) {
+          player.level++;
+          updateLevel();
+          // 레벨이 오르면 낙하 속도 증가
+          // (최소 100ms 이상으로 제한)
+          dropInterval = Math.max(100, dropInterval - 100);
+        }
+        playerReset();
+      }
+      dropCounter = 0;
+    }
+
+    // 블록 좌우 이동
+    function playerMove(dir) {
+      player.pos.x += dir;
+      if (collide(board, player)) {
+        // 충돌 시 이동 취소
+        player.pos.x -= dir;
+      }
+    }
+
+    // 블록 회전 (시계 방향)
+    function rotateMatrix(matrix) {
+      const N = matrix.length;
+      const result = createMatrix(N, N);
+      for (let y = 0; y < N; y++) {
+        for (let x = 0; x < N; x++) {
+          result[x][N - 1 - y] = matrix[y][x];
+        }
+      }
+      return result;
+    }
+
+    function playerRotate(dir) {
+      const oldIndex = player.shapeIndex;
+      // 현재 shapeIndex를 업데이트
+      player.shapeIndex = (player.shapeIndex + dir + 4) % 4;
+      player.matrix = SHAPES[player.shapeKey][player.shapeIndex];
+
+      // 회전으로 인해 충돌 시, 보정을 위한 좌우 움직임
+      let offset = 1;
+      while (collide(board, player)) {
+        player.pos.x += offset;
+        offset = -(offset + (offset > 0 ? 1 : -1));
+        if (offset > player.matrix[0].length) {
+          // 회전을 되돌린다.
+          player.shapeIndex = oldIndex;
+          player.matrix = SHAPES[player.shapeKey][player.shapeIndex];
+          return;
+        }
+      }
+    }
+
+    // 점수 업데이트
+    function updateScore() {
+      document.getElementById('score').innerText = player.score;
+    }
+
+    // 레벨 업데이트
+    function updateLevel() {
+      document.getElementById('level').innerText = player.level;
+    }
+
+    // 메인 게임 루프
+    function update(time = 0) {
+      const deltaTime = time - lastTime;
+      lastTime = time;
+
+      if (!gameOver) {
+        dropCounter += deltaTime;
+        if (dropCounter > dropInterval) {
+          playerDrop();
+        }
+        draw();
+        requestId = requestAnimationFrame(update);
+      }
+    }
+
+    // 키보드 이벤트 처리
+    document.addEventListener('keydown', event => {
+      if (gameOver) return;
+
+      switch(event.key) {
+        case 'ArrowLeft':
+          playerMove(-1);
+          break;
+        case 'ArrowRight':
+          playerMove(1);
+          break;
+        case 'ArrowDown':
+          // 소프트 드롭
+          playerDrop();
+          break;
+        case 'ArrowUp':
+          // 블록 회전
+          playerRotate(1); // 시계방향
+          break;
+        case ' ':
+          // 하드 드롭
+          while (!collide(board, player)) {
+            player.pos.y++;
+          }
+          player.pos.y--;
+          merge(board, player);
+          sweepRows();
+          updateScore();
+          if (player.score >= player.level * 100) {
+            player.level++;
+            updateLevel();
+            dropInterval = Math.max(100, dropInterval - 100);
+          }
+          playerReset();
+          draw();
+          break;
+      }
+    });
+  </script>
+</body>
+</html>
